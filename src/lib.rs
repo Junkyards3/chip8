@@ -26,9 +26,31 @@ const TIMER_HZ: u32 = 60;
 const CPU_STEP: Duration = Duration::from_nanos(1_000_000_000 / CPU_HZ as u64);
 const TIMER_STEP: Duration = Duration::from_nanos(1_000_000_000 / TIMER_HZ as u64);
 
+const FONT_ADDRESS: usize = 0x50;
+const FONT_MEMORY: [u8; 5 * 16] = [
+    0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+    0x20, 0x60, 0x20, 0x20, 0x70, // 1
+    0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+    0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+    0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+    0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+    0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+    0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+    0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+    0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+    0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+    0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+    0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+    0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+    0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
+];
+
+const PROGRAM_ADDRESS: usize = 0x200;
+
 pub struct Emulator<D: Display, KR: KeyboardReader> {
     memory: [u8; MEMORY_SIZE],
-    program_counter: usize,
+    program_counter: u16,
     stack: [u16; STACK_SIZE],
     stack_counter: usize,
     registers: [u8; REGISTER_SIZE],
@@ -40,7 +62,29 @@ pub struct Emulator<D: Display, KR: KeyboardReader> {
 }
 
 impl<D: Display, KR: KeyboardReader> Emulator<D, KR> {
-    fn step(&self) {}
+    pub fn init(display: D, keyboard_reader: KR, program: &[u8]) -> Self {
+        let mut memory = [0u8; MEMORY_SIZE];
+        memory[FONT_ADDRESS..FONT_ADDRESS + FONT_MEMORY.len()].copy_from_slice(&FONT_MEMORY);
+        memory[PROGRAM_ADDRESS..PROGRAM_ADDRESS + program.len()].copy_from_slice(program);
+
+        Emulator {
+            memory,
+            program_counter: PROGRAM_ADDRESS as u16,
+            stack: [0u16; STACK_SIZE],
+            stack_counter: 0,
+            registers: [0u8; REGISTER_SIZE],
+            display,
+            keyboard_reader,
+            delay_timer: 0,
+            sound_timer: 0,
+            draw_flag: false,
+        }
+    }
+
+    fn step(&mut self) {
+        let opcode = ((self.memory[self.program_counter as usize] as u16) << 8)
+            | (self.memory[(self.program_counter + 1) as usize] as u16);
+    }
 
     pub fn run(&mut self) {
         let mut last_cpu = Instant::now();
@@ -78,9 +122,9 @@ impl<D: Display, KR: KeyboardReader> Emulator<D, KR> {
         }
     }
 
-    pub fn run_full_speed(&mut self) {
+    pub fn run_full_speed(&mut self, instructions_count: usize) {
         let mut timer_accumulator = 0;
-        loop {
+        for _ in 0..instructions_count {
             self.step();
 
             timer_accumulator += TIMER_HZ;
@@ -98,4 +142,24 @@ impl<D: Display, KR: KeyboardReader> Emulator<D, KR> {
             }
         }
     }
+}
+
+fn get_x(opcode: u16) -> u8 {
+    ((opcode >> 8) & 0xF) as u8
+}
+
+fn get_y(opcode: u16) -> u8 {
+    ((opcode >> 4) & 0xF) as u8
+}
+
+fn get_n(opcode: u16) -> u8 {
+    (opcode & 0xF) as u8
+}
+
+fn get_nn(opcode: u16) -> u8 {
+    (opcode & 0xFF) as u8
+}
+
+fn get_nnn(opcode: u16) -> u16 {
+    opcode & 0xFFF
 }
