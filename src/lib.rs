@@ -6,7 +6,9 @@ pub enum FlippedOffResult {
 }
 
 pub trait Display {
-    fn draw(x: u8, y: u8) -> FlippedOffResult;
+    fn draw(&mut self, x: u8, y: u8, draw: bool) -> FlippedOffResult;
+
+    fn clear(&mut self);
 }
 
 pub trait KeyboardReader {
@@ -54,6 +56,7 @@ pub struct Emulator<D: Display, KR: KeyboardReader> {
     stack: [u16; STACK_SIZE],
     stack_counter: usize,
     registers: [u8; REGISTER_SIZE],
+    index_register: u16,
     display: D,
     keyboard_reader: KR,
     delay_timer: u8,
@@ -73,6 +76,7 @@ impl<D: Display, KR: KeyboardReader> Emulator<D, KR> {
             stack: [0u16; STACK_SIZE],
             stack_counter: 0,
             registers: [0u8; REGISTER_SIZE],
+            index_register: 0,
             display,
             keyboard_reader,
             delay_timer: 0,
@@ -84,6 +88,28 @@ impl<D: Display, KR: KeyboardReader> Emulator<D, KR> {
     fn step(&mut self) {
         let opcode = ((self.memory[self.program_counter as usize] as u16) << 8)
             | (self.memory[(self.program_counter + 1) as usize] as u16);
+        self.program_counter += 2;
+        match Instruction::from_opcode(opcode) {
+            Instruction::ClearScreen => self.display.clear(),
+            Instruction::Jump => self.program_counter = get_nnn(opcode),
+            Instruction::SetRegisterConstant => {
+                self.registers[get_x(opcode) as usize] = get_nn(opcode)
+            }
+            Instruction::AddRegisterConstant => {
+                let _ = self.registers[get_x(opcode) as usize].overflowing_add(get_nn(opcode));
+            }
+            Instruction::SetIndexRegister => self.index_register = get_nnn(opcode),
+            Instruction::Draw => {
+                let x = self.registers[get_x(opcode) as usize] & 63;
+                let y = self.registers[get_y(opcode) as usize] & 31;
+                self.registers[0xf] = 0;
+                let n = get_n(opcode);
+                for r in 0..n {
+                    let sprite_byte = self.memory[self.index_register as usize];
+                }
+            }
+            _ => todo!(),
+        }
     }
 
     pub fn run(&mut self) {
@@ -162,4 +188,113 @@ fn get_nn(opcode: u16) -> u8 {
 
 fn get_nnn(opcode: u16) -> u16 {
     opcode & 0xFFF
+}
+
+enum Instruction {
+    ClearScreen,
+    Jump,
+    JumpOffset,
+    SetRegisterConstant,
+    AddRegisterConstant,
+    CopyBetweenRegister,
+    SetBetweenRegister,
+    SetOrRegister,
+    SetAndRegister,
+    SetXorRegister,
+    AddBetweenRegister,
+    SubBetweenRegister,
+    OppSubBetweenRegister,
+    ShiftRightBetweenRegister,
+    ShiftLeftBetweenRegister,
+    SetIndexRegister,
+    Draw,
+    Return,
+    Subroutine,
+    SkipEqualConstant,
+    SkipUnequalConstant,
+    SkipEqualRegister,
+    SkipUnequalRegister,
+    MachineSubroutine,
+    RandomNumber,
+    SkipKeyHeld,
+    SkipKeyNotHeld,
+    SetRegisterFromDelayTimer,
+    WaitKeyPress,
+    SetDelayTimerFromRegister,
+    SetSoundTimerFromRegister,
+    AddIndexRegister,
+    SetIndexSpriteData,
+    StoreBCD,
+    StoreAllRegisters,
+    FillAllRegisters,
+}
+
+impl Instruction {
+    fn from_opcode(opcode: u16) -> Self {
+        match opcode << 12 {
+            0x0 => Self::from_opcode_0(opcode),
+            0x1 => Self::Jump,
+            0x2 => Self::Subroutine,
+            0x3 => Self::SkipEqualConstant,
+            0x4 => Self::SkipUnequalConstant,
+            0x5 => Self::SkipEqualRegister,
+            0x6 => Self::SetRegisterConstant,
+            0x7 => Self::AddRegisterConstant,
+            0x8 => Self::from_opcode_8(opcode),
+            0x9 => Self::SkipUnequalRegister,
+            0xa => Self::SetIndexRegister,
+            0xb => Self::JumpOffset,
+            0xc => Self::RandomNumber,
+            0xd => Self::Draw,
+            0xe => Self::from_opcode_e(opcode),
+            0xf => Self::from_opcode_f(opcode),
+            _ => panic!("unknown instruction"),
+        }
+    }
+
+    fn from_opcode_0(opcode: u16) -> Self {
+        match opcode & 0xff {
+            0xe0 => Self::ClearScreen,
+            0xee => Self::Return,
+            _ => Self::MachineSubroutine,
+        }
+    }
+
+    fn from_opcode_8(opcode: u16) -> Instruction {
+        match opcode & 0xf {
+            0x0 => Self::SetBetweenRegister,
+            0x1 => Self::SetOrRegister,
+            0x2 => Self::SetAndRegister,
+            0x3 => Self::SetXorRegister,
+            0x4 => Self::AddBetweenRegister,
+            0x5 => Self::SubBetweenRegister,
+            0x6 => Self::ShiftRightBetweenRegister,
+            0x7 => Self::OppSubBetweenRegister,
+            0xe => Self::ShiftLeftBetweenRegister,
+            _ => panic!("unknown instruction"),
+        }
+    }
+
+    fn from_opcode_e(opcode: u16) -> Instruction {
+        match opcode & 0xff {
+            0x9e => Self::SkipKeyHeld,
+            0xa1 => Self::SkipKeyNotHeld,
+            _ => panic!("unknown instruction"),
+        }
+    }
+
+    fn from_opcode_f(opcode: u16) -> Instruction {
+        match opcode & 0xff {
+            0x07 => Self::SetRegisterFromDelayTimer,
+            0x0a => Self::WaitKeyPress,
+            0x15 => Self::SetDelayTimerFromRegister,
+            0x18 => Self::SetSoundTimerFromRegister,
+            0x1e => Self::AddIndexRegister,
+            0x29 => Self::SetIndexSpriteData,
+            0x33 => Self::StoreBCD,
+            0x55 => Self::StoreAllRegisters,
+            0x65 => Self::FillAllRegisters,
+            _ => panic!("unknown instruction"),
+        }
+    }
 }
